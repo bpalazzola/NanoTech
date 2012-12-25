@@ -1,0 +1,5 @@
+irc:
+  protect: true
+  circuits: []
+debug:
+  redstone-events: false

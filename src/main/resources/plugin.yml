@@ -1,0 +1,36 @@
+author: main()
+database: false
+description: Redstone!
+main: me.main__.nanotech.NanoTech
+name: NanoTech
+startup: postworld
+version: '1.0'
+commands:
+  buildirc:
+    description: Build an IntegratedRedstoneCircuit.
+    aliases: [ircbuild]
+    permission: nanotech.irc.build
+    usage: "/<command> [IRC name]"
+  loadircs:
+    description: Use this if you added IRCs to the folder since the last server startup.
+    aliases: [ircload]
+    permission: nanotech.irc.load
+    usage: "/<command>"
+
+permissions:
+  nanotech.*:
+    description: Gives access to all NanoTech commands.
+    children:
+      nanotech.irc.*: true
+  nanotech.irc.*:
+    description: Gives access to all NanoTech IRC commands.
+    children:
+      nanotech.irc.build: true
+      nanotech.irc.load: true
+      nanotech.irc.destroy: true
+  nanotech.irc.build:
+    description: Allows you to build an IntegratedRedstoneCircuit.
+  nanotech.irc.load:
+    description: Allows you to use the loadircs command.
+  nanotech.irc.destroy:
+    description: Allows you to destroy IntegratedRedstoneCircuits.
