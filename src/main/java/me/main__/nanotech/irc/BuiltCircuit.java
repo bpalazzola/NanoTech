@@ -23,22 +23,40 @@ import static java.lang.Math.*;
 
 @SerializableAs("NanoTech_IRC")
 public class BuiltCircuit implements ConfigurationSerializable, Runnable, Circuit.Input, Circuit.Output {
-    protected final Block[] blocks;
+    private List<? extends Location> repeaterLocations;
+    private List<? extends Location> torchLocations;
+    private List<? extends Location> blockLocations;
+    private Block[] repeaters;
+    private Block[] torches;
+    private Block[] blocks;
+
     // these four are redundant from the blocks but we're saving them for performance reasons
     protected final int highX;
     protected final int lowX;
     protected final int highZ;
     protected final int lowZ;
+
     protected Circuit circuit;
     protected final CircuitFactory circuitFactory;
     protected boolean built;
-    private final Block[] repeaters;
-    private final Block[] torches;
 
     private BuiltCircuit(final List<? extends Location> blocks, final int highX, final int lowX, final int highZ,
                          final int lowZ, final CircuitFactory circuitFactory,
                          final List<? extends Location> repeaters, final List<? extends Location> torches) {
-        this(toBlockArray(blocks), highX, lowX, highZ, lowZ, circuitFactory, toBlockArray(repeaters), toBlockArray(torches));
+        this.blocks = null;
+        this.blockLocations = blocks;
+        this.torches = null;
+        this.torchLocations = torches;
+        this.repeaters = null;
+        this.repeaterLocations = repeaters;
+
+        this.highX = highX;
+        this.lowX = lowX;
+        this.highZ = highZ;
+        this.lowZ = lowZ;
+        this.circuitFactory = circuitFactory;
+
+        this.built = true;
     }
 
     private static Block[] toBlockArray(List<? extends Location> locs) {
@@ -46,6 +64,13 @@ public class BuiltCircuit implements ConfigurationSerializable, Runnable, Circui
         for (int i = 0; i < blocks.length; i++)
             blocks[i] = locs.get(i).getBlock();
         return blocks;
+    }
+
+    private static List<LightweightLocation> toLightweightLocationList(Block[] blocks) {
+        List<LightweightLocation> locs = new LinkedList<LightweightLocation>();
+        for (Block b : blocks)
+            locs.add(new LightweightLocation(b.getLocation()));
+        return locs;
     }
 
     private BuiltCircuit(final Block[] blocks, final int highX, final int lowX, final int highZ,
@@ -58,7 +83,6 @@ public class BuiltCircuit implements ConfigurationSerializable, Runnable, Circui
         this.lowZ = lowZ;
         this.circuitFactory = circuitFactory;
 
-        this.built = false;
         //if (!circuit.isDigital())
         //    throw new IllegalArgumentException("This is only for digital circuits!");
         this.repeaters = repeaters;
@@ -74,6 +98,7 @@ public class BuiltCircuit implements ConfigurationSerializable, Runnable, Circui
     }
 
     public Block[] getBlocks() {
+        activate();
         return blocks;
     }
 
@@ -90,6 +115,7 @@ public class BuiltCircuit implements ConfigurationSerializable, Runnable, Circui
     }
 
     public void build(BlockFace orientation, BlockChangeAPI api) {
+        activate();
         // what is this orientation shit?
         // ---
         // Example: North north east
@@ -180,6 +206,24 @@ public class BuiltCircuit implements ConfigurationSerializable, Runnable, Circui
         built = true;
     }
 
+    public void activate() {
+        if (this.blocks != null)
+            return;
+        this.blocks = toBlockArray(this.blockLocations);
+        this.torches = toBlockArray(this.torchLocations);
+        this.repeaters = toBlockArray(this.repeaterLocations);
+        this.blockLocations = this.torchLocations = this.repeaterLocations = null;
+    }
+
+    public void sleep() {
+        if (this.blockLocations != null)
+            return;
+        this.blockLocations = toLightweightLocationList(this.blocks);
+        this.torchLocations = toLightweightLocationList(this.torches);
+        this.repeaterLocations = toLightweightLocationList(this.repeaters);
+        this.blocks = this.torches = this.repeaters = null;
+    }
+
     public Collection<BlockFace> getPossibleOrientations() {
         List<BlockFace> list = new LinkedList<BlockFace>();
         final int lenz = abs(highZ - lowZ);
@@ -201,6 +245,7 @@ public class BuiltCircuit implements ConfigurationSerializable, Runnable, Circui
     }
 
     public void destroy(BlockChangeAPI api) {
+        activate();
         makeAirAndNullOut(repeaters, api);
         makeAirAndNullOut(torches, api);
         built = false;
@@ -214,46 +259,41 @@ public class BuiltCircuit implements ConfigurationSerializable, Runnable, Circui
     }
 
     public Block[] getInputs() {
+        activate();
         return repeaters;
     }
 
     public Block[] getOutputs() {
+        activate();
         return torches;
     }
 
     @Override
     public void run() {
+        activate();
         getCircuit().onInputChanged();
     }
 
     @Override
     public Map<String, Object> serialize() {
+        sleep();
         Map<String, Object> map = new LinkedHashMap<String, Object>();
-        List<LightweightLocation> blo = new LinkedList<LightweightLocation>();
-        for (Block b : blocks)
-            blo.add(new LightweightLocation(b.getLocation()));
-        map.put("blocks", blo);
+        map.put("blocks", blockLocations);
         map.put("circuit", getCircuit().getFactory().getId());
-        map.put("highX", highX);
-        map.put("lowX", lowX);
-        map.put("highZ", highZ);
-        map.put("lowZ", lowZ);
-
-        List<LightweightLocation> rep = new LinkedList<LightweightLocation>();
-        for (Block b : repeaters)
-            rep.add(new LightweightLocation(b.getLocation()));
-        map.put("repeaters", rep);
-        List<LightweightLocation> tor = new LinkedList<LightweightLocation>();
-        for (Block b : torches)
-            tor.add(new LightweightLocation(b.getLocation()));
-        map.put("torches", tor);
+        // we're not serializing these values since they're only used in build()
+        //map.put("highX", highX);
+        //map.put("lowX", lowX);
+        //map.put("highZ", highZ);
+        //map.put("lowZ", lowZ);
+        map.put("repeaters", repeaterLocations);
+        map.put("torches", torchLocations);
         return map;
     }
 
     @SuppressWarnings("unchecked")
     public static BuiltCircuit deserialize(Map<String, Object> args) {
-        return new BuiltCircuit(((List<LightweightLocation>)args.get("blocks")), (Integer)args.get("highX"),
-                (Integer)args.get("lowX"), (Integer)args.get("highZ"), (Integer)args.get("lowZ"),
+        return new BuiltCircuit(((List<LightweightLocation>)args.get("blocks")), /*(Integer)args.get("highX"),
+                (Integer)args.get("lowX"), (Integer)args.get("highZ"), (Integer)args.get("lowZ"),*/ -1, -1, -1, -1,
                 Storage.getIRC_static((String) args.get("circuit")),
                 ((List<LightweightLocation>)args.get("repeaters")),
                 ((List<LightweightLocation>)args.get("torches")));
@@ -272,6 +312,7 @@ public class BuiltCircuit implements ConfigurationSerializable, Runnable, Circui
 
     @Override
     public void output(final boolean[] data) {
+        activate();
         if (!isBuilt())
             return;
 

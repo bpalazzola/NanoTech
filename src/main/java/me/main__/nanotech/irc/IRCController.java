@@ -24,13 +24,13 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockRedstoneEvent;
+import org.bukkit.event.world.WorldLoadEvent;
+import org.bukkit.event.world.WorldUnloadEvent;
 
 import java.io.File;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -76,29 +76,29 @@ public class IRCController implements Listener {
     private final File storageFolder;
     private final Storage storage;
     private final ConversationFactory conversationFactory;
-    private final Set<BuiltCircuit> circuits;
+    private final Map<String, Set<BuiltCircuit>> circuits;
     private final Map<Location, WeakReference<BuiltCircuit>> blocks;
     private final Map<Location, WeakReference<BuiltCircuit>> outputs;
     private final Map<Location, WeakReference<BuiltCircuit>> inputs;
-    private final Map<Location, Integer> hacks;
 
     private final ConfigurationSection config;
+    private final WorldConfigStorage configStorage;
 
     public static void registerClasses() {
         ConfigurationSerialization.registerClass(BuiltCircuit.class);
     }
 
-    public IRCController(final NanoTech plugin, final ConfigurationSection config) {
+    public IRCController(final NanoTech plugin, final ConfigurationSection config, final File worldConfigFolder) {
         this.plugin = plugin;
         this.config = config;
-        this.storageFolder = new File(plugin.getDataFolder().getAbsolutePath() + File.separator + "IRCStorage");
+        this.configStorage = new WorldConfigStorage(worldConfigFolder);
+        this.storageFolder = new File(plugin.getDataFolder(), "IRCStorage");
         this.storage = new Storage(plugin, Arrays.asList(new SimpleMappingLoader(), new JavaCircuitLoader()));
         this.storage.load(storageFolder);
-        this.circuits = new HashSet<BuiltCircuit>();
+        this.circuits = new HashMap<String, Set<BuiltCircuit>>();
         this.blocks = new HashMap<Location, WeakReference<BuiltCircuit>>();
         this.outputs = new HashMap<Location, WeakReference<BuiltCircuit>>();
         this.inputs = new HashMap<Location, WeakReference<BuiltCircuit>>();
-        this.hacks = new HashMap<Location, Integer>();
 
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
         plugin.getCommand("buildirc").setExecutor(new CommandExecutor() {
@@ -163,18 +163,44 @@ public class IRCController implements Listener {
         loadIRCs();
     }
 
+    public File getIRCStorageFolder() {
+        return storageFolder;
+    }
+
+    @EventHandler
+    public void onWorldLoad(WorldLoadEvent event) {
+        List<?> list = configStorage.getConfig(event.getWorld().getName()).getList("circuits");
+        if (list != null)
+            for (Object obj : list)
+                if (obj instanceof BuiltCircuit)
+                    add((BuiltCircuit)obj);
+                else plugin.getLogger().warning("Unknown object in the circuits list: " + obj);
+    }
+
+    @EventHandler
+    public void onWorldUnload(WorldUnloadEvent event) {
+        Set<BuiltCircuit> set = circuits.remove(event.getWorld().getName());
+        if (set != null) {
+            for (BuiltCircuit bc : set)
+                bc.sleep();
+            configStorage.getConfig(event.getWorld().getName()).set("circuits", new ArrayList<BuiltCircuit>(set));
+            configStorage.unload(event.getWorld().getName());
+        }
+    }
+
     private void loadIRCs() {
-        for (Object obj : config.getList("circuits"))
-            if (obj instanceof BuiltCircuit)
-                add((BuiltCircuit) obj);
-            else plugin.getLogger().warning("Unknown object in the circuits list: " + obj);
+        for (World w : plugin.getServer().getWorlds())
+            onWorldLoad(new WorldLoadEvent(w));
     }
 
     public void saveIRCs() {
-        config.set("circuits", new ArrayList<BuiltCircuit>(circuits));
+        for (Map.Entry<String, Set<BuiltCircuit>> entry : circuits.entrySet())
+            configStorage.getConfig(entry.getKey()).set("circuits", new ArrayList<BuiltCircuit>(entry.getValue()));
+        configStorage.saveAll();
     }
 
     public void add(BuiltCircuit bc) {
+        bc.activate();
         for (Block b : bc.getInputs())
             inputs.put(b.getLocation(), new WeakReference<BuiltCircuit>(bc));
         for (Block b : bc.getOutputs())
@@ -182,7 +208,10 @@ public class IRCController implements Listener {
         for (Block b : bc.getBlocks())
             blocks.put(b.getLocation(), new WeakReference<BuiltCircuit>(bc));
 
-        circuits.add(bc);
+        String world = bc.getBlocks()[0].getWorld().getName();
+        if (!circuits.containsKey(world))
+            circuits.put(world, new HashSet<BuiltCircuit>());
+        circuits.get(world).add(bc);
         bc.run();
     }
 
@@ -266,12 +295,6 @@ public class IRCController implements Listener {
     @EventHandler(priority = EventPriority.HIGH)
     public void handleRedstone(BlockRedstoneEvent event) {
         Location loc = event.getBlock().getLocation();
-        if (hacks.containsKey(loc)) {
-            System.out.println("Hack callback at " + loc);
-            event.setNewCurrent(hacks.get(loc));
-            hacks.remove(loc);
-            return;
-        }
 
         if (outputs.containsKey(loc) && outputs.get(loc).get() != null && outputs.get(loc).get().isBuilt()) {
             // block redstone changes for the outputs
@@ -305,7 +328,7 @@ public class IRCController implements Listener {
             if (p.hasPermission("nanotech.irc.destroy")) {
                 p.sendMessage("[NanoTech] IRC destroyed.");
                 circuit.destroy(new BlockChangeAPI.Real());
-                circuits.remove(circuit);
+                circuits.get(event.getPlayer().getWorld().getName()).remove(circuit);
             } else {
                 p.sendMessage("Ouch! That hurts!");
                 p.playEffect(event.getBlock().getLocation(), Effect.EXTINGUISH, null);
@@ -313,10 +336,6 @@ public class IRCController implements Listener {
                 event.setCancelled(true);
             }
         }
-    }
-
-    public Collection<BuiltCircuit> getCircuits() {
-        return Collections.unmodifiableSet(circuits);
     }
 
     public boolean handleEnvironmentalBlockBreak(final Location location) {
@@ -334,7 +353,7 @@ public class IRCController implements Listener {
         if (circuit != null) {
             if (!config.getBoolean("protect")) {
                 circuit.destroy(new BlockChangeAPI.Real());
-                circuits.remove(circuit);
+                circuits.get(location.getWorld().getName()).remove(circuit);
                 plugin.getLogger().info("IRC at " + location + " was destroyed by the environment.");
             }
             return true; // return true: we are either protecting it or removed it already

@@ -5,6 +5,7 @@ import javassist.CtClass;
 import javassist.CtMethod;
 import javassist.LoaderClassPath;
 import me.main__.nanotech.NanoTech;
+import me.main__.nanotech.TickGetter;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -23,12 +24,16 @@ public class CraftBukkitHelper {
         private final String diodeCanStayMethod;
         private final String diodeCanStayDesc;
         private final String canStayBody;
+        private final String serverClass;
+        private final String currentTickField;
 
-        private PatchInformation(final String nmsPackage, final String diodeCanStayMethod, final String diodeCanStayDesc, final String canStayBody) {
+        private PatchInformation(final String nmsPackage, final String diodeCanStayMethod, final String diodeCanStayDesc, final String canStayBody, final String serverClass, final String currentTickField) {
             this.nmsPackage = nmsPackage;
             this.diodeCanStayMethod = diodeCanStayMethod;
             this.diodeCanStayDesc = diodeCanStayDesc;
             this.canStayBody = canStayBody;
+            this.serverClass = serverClass;
+            this.currentTickField = currentTickField;
         }
     }
 
@@ -60,7 +65,7 @@ public class CraftBukkitHelper {
                     "{" +
                             "boolean b = super.d($1, $2, $3, $4);" +
                             "return b ? b : me.main__.nanotech.dirty.CraftBukkitHelper.canStay($1.getWorld(), $2, $3, $4);" +
-                    "}");
+                    "}", "MinecraftServer", "currentTick");
         }
 
         @Override
@@ -84,7 +89,7 @@ public class CraftBukkitHelper {
         }
     }
 
-    private static final Pattern CB_VERSION = Pattern.compile("git-Bukkit-\\d\\.\\d\\.\\d-R\\d\\.\\d-[\\d]+-g[\\dabcdef]+ \\(MC: (?<major>[\\d]+)\\.(?<minor>[\\d]+)\\.(?<rev>[\\d]+)\\)");
+    private static final Pattern CB_VERSION = Pattern.compile("git-Bukkit-\\d\\.\\d\\.\\d-R\\d\\.\\d-[\\d]+-g[\\dabcdef]+(-b[\\d]+jnks)? \\(MC: (?<major>[\\d]+)\\.(?<minor>[\\d]+)\\.(?<rev>[\\d]+)\\)");
     private static final PIBuilder[][][] SUPPORTED_VERSIONS = {
             null, // 0.X
             { // 1.X
@@ -174,11 +179,16 @@ public class CraftBukkitHelper {
         return plugin.getIRCController().handleEnvironmentalBlockBreak(new Location(w, x, y, z));
     }
 
+    public static TickGetter TICK_GETTER;
+
     private static boolean doIt(final NanoTech plugin, final PatchInformation pi) {
         try {
+            // set up javassist
             ClassPool pool = ClassPool.getDefault();
             pool.appendClassPath(new LoaderClassPath(CraftBukkitHelper.class.getClassLoader()));
             pool.get(CraftBukkitHelper.class.getName());
+
+            // create a fake/proxy diode with an overridden canStay method and inject it
             CtClass diodeClass = pool.get(pi.nmsPackage + "BlockDiode");
             CtClass proxyDiode = pool.makeClass("me.main__.nanotech.dirty.proxy.BlockDiode", diodeClass);
             CtMethod realCanStay = diodeClass.getMethod(pi.diodeCanStayMethod, pi.diodeCanStayDesc);
@@ -200,6 +210,20 @@ public class CraftBukkitHelper {
 
             USE_DA_FORCE(blockClass.getField("DIODE_OFF"), null, repeaterOff);
             USE_DA_FORCE(blockClass.getField("DIODE_ON"), null, repeaterOn);
+
+            final Class<?> server = Class.forName(pi.nmsPackage + pi.serverClass);
+            final Field tickField = server.getField(pi.currentTickField);
+            // create the TickGetter
+            TICK_GETTER = new TickGetter() {
+                @Override
+                public int getCurrentTick() {
+                    try {
+                        return tickField.getInt(null);
+                    } catch (IllegalAccessException e) {
+                        throw new Error(e);
+                    }
+                }
+            };
 
             // fix classloader. this totally isn't already dirty enough... -.-
             ClassLoader nmsLoader = blockClass.getClassLoader();

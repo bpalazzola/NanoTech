@@ -16,6 +16,11 @@ commands:
     aliases: [ircload]
     permission: nanotech.irc.load
     usage: "/<command>"
+  redstonedebug:
+    description: Debug redstone circuits!
+    aliases: [redstonedbg]
+    permission: nanotech.redstonedebug
+    usage: "/<command> (set|remove)DebugPoint <name>"
 
 permissions:
   nanotech.*:

@@ -44,9 +44,13 @@ public class LightweightLocation extends Location implements ConfigurationSerial
         return Bukkit.getWorld(world);
     }
 
+    public Location toLocation() {
+        return new Location(getWorld(), getX(), getY(), getZ(), getYaw(), getPitch());
+    }
+
     @Override
     public Block getBlock() {
-        return getWorld().getBlockAt(this);
+        return getWorld().getBlockAt(getBlockX(), getBlockY(), getBlockZ());
     }
 
     @Override

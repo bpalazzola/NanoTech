@@ -82,7 +82,7 @@ public class Storage {
     public List<String> matchStart(final String start) {
         List<String> matches = new LinkedList<String>();
         for (Map.Entry<String, CircuitFactory> entry : circuitMap.entrySet())
-            if (entry.getKey().startsWith(start))
+            if (entry.getKey().toLowerCase().startsWith(start.toLowerCase()))
                 matches.add(entry.getKey());
         return matches;
     }

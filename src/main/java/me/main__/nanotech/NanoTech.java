@@ -1,5 +1,7 @@
 package me.main__.nanotech;
 
+import me.main__.nanotech.debugging.RedstoneDebugManager;
+import me.main__.nanotech.debugging.RedstoneDebugTools;
 import me.main__.nanotech.dirty.CraftBukkitHelper;
 import me.main__.nanotech.irc.IRCController;
 import org.bukkit.command.Command;
@@ -10,9 +12,13 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockRedstoneEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.File;
+
 public class NanoTech extends JavaPlugin implements Listener {
     //private Buscript buscript;
     private IRCController ircController;
+    private RedstoneDebugManager redstoneDebugManager;
+    private TickGetter tickGetter;
 
     @Override
     public void onLoad() {
@@ -30,12 +36,24 @@ public class NanoTech extends JavaPlugin implements Listener {
         if (!CraftBukkitHelper.run(this, getConfig().getBoolean("craftbukkit.force"))) {
             getLogger().warning("Helper methods were NOT registered!");
             getLogger().warning("Removing blocks underneath IRC components (repeaters) WILL result in glitches!");
+            getLogger().warning("RedstoneDebug will always show -1 as the current tick!");
+        } else {
+            tickGetter = CraftBukkitHelper.TICK_GETTER;
         }
 
         if (getConfig().getBoolean("debug.redstone-events"))
             getServer().getPluginManager().registerEvents(this, this);
 
-        ircController = new IRCController(this, getConfig().getConfigurationSection("irc"));
+        ircController = new IRCController(this, getConfig().getConfigurationSection("irc"),
+                new File(getDataFolder(), "persistence"));
+
+        redstoneDebugManager = new RedstoneDebugManager(this,
+                new RedstoneDebugTools(tickGetter != null ? tickGetter : new TickGetter() {
+            @Override
+            public int getCurrentTick() {
+                return -1;
+            }
+        }));
     }
 
     @Override
